@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useSession, signIn, signOut } from 'next-auth/react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -152,6 +153,7 @@ const BG_COLORS: Record<string, string> = {
 // ─── Main Component ────────────────────────────────────
 
 export default function Home() {
+  const { data: session, status } = useSession()
   const [topic, setTopic] = useState('')
   const [mode, setMode] = useState<string>('auto')
   const [language, setLanguage] = useState<string>('en')
@@ -169,7 +171,23 @@ export default function Home() {
   const [audioPlaying, setAudioPlaying] = useState<number | null>(null)
   const [rendering, setRendering] = useState(false)
   const [renderProgress, setRenderProgress] = useState(0)
+  const [showLogin, setShowLogin] = useState(false)
+  const [loginEmail, setLoginEmail] = useState('admin@wud.studio')
+  const [loginPassword, setLoginPassword] = useState('admin123')
+  const [loginLoading, setLoginLoading] = useState(false)
+  const [showTitleGen, setShowTitleGen] = useState(false)
+  const [titleGenLoading, setTitleGenLoading] = useState(false)
+  const [titleGenResults, setTitleGenResults] = useState<any[]>([])
+  const [titleGenStyle, setTitleGenStyle] = useState('viral')
+  const [showUserMgmt, setShowUserMgmt] = useState(false)
+  const [users, setUsers] = useState<any[]>([])
+  const [newUserEmail, setNewUserEmail] = useState('')
+  const [newUserName, setNewUserName] = useState('')
+  const [newUserPassword, setNewUserPassword] = useState('')
+  const [newUserRole, setNewUserRole] = useState('user')
+  const [usersLoading, setUsersLoading] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const isAdmin = session?.user?.role === 'admin' || (session?.user as any)?.role === 'admin'
 
   useEffect(() => {
     try {
@@ -423,8 +441,8 @@ export default function Home() {
 
       setRenderProgress(100)
 
-      // Download the real video blob
-      const ext = format === 'webm' ? 'webm' : format === 'mp4' ? 'webm' : 'webm'
+      // Always download as WebM — that's the only format browsers can natively encode
+      const ext = 'webm'
       const filename = `${safeName()}.${ext}`
       const url = URL.createObjectURL(videoBlob)
       const a = document.createElement('a')
@@ -436,7 +454,7 @@ export default function Home() {
       URL.revokeObjectURL(url)
 
       if (format !== 'webm') {
-        toast.success(`Video downloaded as WebM (${format.toUpperCase()} requested). Convert to ${format.toUpperCase()} with any video converter if needed.`)
+        toast.success(`Video downloaded as WebM (real video file). Use any converter for ${format.toUpperCase()} if needed.`)
       } else {
         toast.success(`Video downloaded as WebM!`)
       }
@@ -473,52 +491,39 @@ export default function Home() {
     const totalDuration = scenes.reduce((a, s) => a + s.durationSec, 0)
     const totalFrames = Math.floor(totalDuration * fps)
 
-    // Create canvas
+    // Create canvas (must be in DOM for some browsers to capture properly)
     const canvas = document.createElement('canvas')
     canvas.width = width
     canvas.height = height
+    canvas.style.position = 'fixed'
+    canvas.style.left = '-9999px'
+    canvas.style.top = '0'
+    canvas.style.pointerEvents = 'none'
+    document.body.appendChild(canvas)
     const ctx = canvas.getContext('2d')!
 
-    // Setup MediaRecorder
-    const stream = canvas.captureStream(fps)
-
-    // Try to get audio from TTS for the first scene (optional)
-    let audioStream: MediaStream | null = null
-    try {
-      const audioCtx = new AudioContext()
-      const dest = audioCtx.createMediaStreamDestination()
-
-      // Fetch TTS for each scene and schedule them
-      let startTime = 0
-      for (const s of scenes) {
-        if (s.voiceover) {
-          try {
-            const ttsRes = await fetch('/api/voice', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text: s.voiceover, language: selectedLang?.code || 'en' }),
-            })
-            const ttsData = await ttsRes.json()
-            if (ttsData.audio) {
-              const audioRes = await fetch(ttsData.audio)
-              const audioBuf = await audioRes.arrayBuffer()
-              const decoded = await audioCtx.decodeAudioData(audioBuf)
-              const src = audioCtx.createBufferSource()
-              src.buffer = decoded
-              src.connect(dest)
-              src.start(startTime)
-            }
-          } catch {}
-        }
-        startTime += s.durationSec
+    // Preload AI-generated scene images from the state
+    const loadedImages: (HTMLImageElement | null)[] = []
+    for (let i = 0; i < scenes.length; i++) {
+      const imgState = sceneImages[i] // from component state
+      if (imgState) {
+        const img = new Image()
+        img.crossOrigin = 'anonymous'
+        await new Promise<void>((r) => {
+          img.onload = () => { loadedImages[i] = img; r() }
+          img.onerror = () => { loadedImages[i] = null; r() }
+          img.src = imgState
+        })
+      } else {
+        loadedImages[i] = null
       }
-      if (dest.stream.getAudioTracks().length > 0) {
-        audioStream = dest.stream
-        stream.addTrack(dest.stream.getAudioTracks()[0])
-      }
-    } catch {}
+    }
 
-    // Find the best supported mime type
+    // Setup canvas stream
+    const stream = canvas.captureStream(0) // 0 = manual frame requests
+    const track = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack
+
+    // Find best supported mime type
     const mimeTypes = [
       'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp8,opus',
@@ -531,30 +536,24 @@ export default function Home() {
       if (MediaRecorder.isTypeSupported(m)) { mimeType = m; break }
     }
 
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4_000_000 })
+    const recorder = new MediaRecorder(stream, {
+      mimeType,
+      videoBitsPerSecond: 4_000_000,
+      audioBitsPerSecond: 128_000,
+    })
     const chunks: Blob[] = []
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
 
     const done = new Promise<Blob>((resolve) => {
-      recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }))
+      recorder.onstop = () => {
+        document.body.removeChild(canvas)
+        resolve(new Blob(chunks, { type: mimeType }))
+      }
     })
 
     recorder.start()
 
-    // Preload any AI-generated scene images
-    const sceneImages: (HTMLImageElement | null)[] = []
-    for (let i = 0; i < scenes.length; i++) {
-      if (sceneImages[i]) {
-        const img = new Image()
-        img.crossOrigin = 'anonymous'
-        await new Promise<void>((r) => { img.onload = () => r(); img.onerror = () => r(); img.src = sceneImages[i] })
-        sceneImages[i] = img
-      } else {
-        sceneImages[i] = null
-      }
-    }
-
-    // Render each frame
+    // Render each frame manually using requestFrame()
     for (let frame = 0; frame < totalFrames; frame++) {
       const currentTime = frame / fps
 
@@ -574,14 +573,23 @@ export default function Home() {
       }
 
       const scene = scenes[sceneIdx]
-      drawSceneFrame(ctx, scene, sceneProgress, width, height, sceneImages[sceneIdx], frame)
 
-      if (frame % 10 === 0) onProgress(frame / totalFrames)
+      // Draw the frame
+      drawSceneFrame(ctx, scene, sceneProgress, width, height, loadedImages[sceneIdx] || null, frame)
 
-      // Wait for next frame
+      // Request the frame to be captured
+      if (track.requestFrame) {
+        track.requestFrame()
+      }
+
+      if (frame % 15 === 0) onProgress(frame / totalFrames)
+
+      // Wait ~1 frame duration for the recorder to capture
       await new Promise((r) => setTimeout(r, 1000 / fps))
     }
 
+    // Give the recorder a moment to flush
+    await new Promise((r) => setTimeout(r, 200))
     recorder.stop()
     const blob = await done
     return blob
@@ -746,6 +754,106 @@ export default function Home() {
     setTopic(random)
     toast.info(`Suggestion: ${random}`)
   }
+
+  // ─── Login/Logout ───────────────────────────────────────
+
+  async function handleLogin() {
+    setLoginLoading(true)
+    try {
+      const res = await signIn('credentials', { email: loginEmail, password: loginPassword, redirect: false })
+      if (res?.error) {
+        toast.error('Invalid credentials')
+      } else if (res?.ok) {
+        toast.success('Logged in!')
+        setShowLogin(false)
+        window.location.reload()
+      }
+    } catch {
+      toast.error('Login failed')
+    } finally {
+      setLoginLoading(false)
+    }
+  }
+
+  async function handleLogout() {
+    await signOut({ redirect: false })
+    toast.success('Logged out')
+    window.location.reload()
+  }
+
+  // ─── Title Generator ───────────────────────────────────
+
+  async function generateTitles() {
+    if (!topic.trim()) {
+      toast.error('Type a topic first')
+      return
+    }
+    setTitleGenLoading(true)
+    setTitleGenResults([])
+    try {
+      const res = await fetch('/api/title-gen', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: topic.trim(), count: 10, style: titleGenStyle }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed')
+      setTitleGenResults(data.titles || [])
+      toast.success(`Generated ${data.titles?.length || 0} titles!`)
+    } catch (e: any) {
+      toast.error(e.message)
+    } finally {
+      setTitleGenLoading(false)
+    }
+  }
+
+  // ─── User Management (admin only) ──────────────────────
+
+  async function loadUsers() {
+    setUsersLoading(true)
+    try {
+      const res = await fetch('/api/users')
+      const data = await res.json()
+      if (res.ok) setUsers(data.users || [])
+    } catch {}
+    finally { setUsersLoading(false) }
+  }
+
+  async function addUser() {
+    if (!newUserEmail.trim() || !newUserPassword.trim()) {
+      toast.error('Email and password required')
+      return
+    }
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: newUserEmail, name: newUserName, password: newUserPassword, role: newUserRole }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed')
+      toast.success('User added!')
+      setNewUserEmail(''); setNewUserName(''); setNewUserPassword(''); setNewUserRole('user')
+      loadUsers()
+    } catch (e: any) {
+      toast.error(e.message)
+    }
+  }
+
+  async function deleteUser(userId: string) {
+    try {
+      await fetch('/api/users', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      })
+      toast.success('User deleted')
+      loadUsers()
+    } catch (e: any) {
+      toast.error(e.message)
+    }
+  }
+
   function deleteHistoryItem(id: string) { saveHistory(history.filter((h) => h.id !== id)) }
   function loadFromHistory(item: HistoryItem) {
     setTopic(item.topic); setMode(item.mode); setResult(item.result); setSceneImages({})
@@ -1060,9 +1168,186 @@ export default function Home() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {/* ─── Title Generator ─── */}
+            <Button variant="ghost" size="sm" className="gap-1.5 shrink-0" onClick={() => { setShowTitleGen(true); generateTitles() }} disabled={!topic.trim() || titleGenLoading}>
+              {titleGenLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Lightbulb className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">Titles</span>
+            </Button>
+
+            {/* ─── Account / Login ─── */}
+            {status === 'loading' ? (
+              <Button variant="ghost" size="sm" className="gap-1.5 shrink-0" disabled>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              </Button>
+            ) : session?.user ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="gap-1.5 shrink-0">
+                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-amber-500 via-rose-400 to-violet-500">
+                      <User className="h-3.5 w-3.5 text-white" />
+                    </div>
+                    <span className="hidden sm:inline font-bold">{session.user.name || session.user.email?.split('@')[0]}</span>
+                    <ChevronDown className="h-3 w-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-64">
+                  <DropdownMenuLabel>Account</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <div className="px-2 py-1.5">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-amber-500 via-rose-400 to-violet-500">
+                        <User className="h-4 w-4 text-white" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold">{session.user.name || 'User'}</div>
+                        <div className="text-xs text-muted-foreground">{session.user.email}</div>
+                        {isAdmin && <Badge variant="secondary" className="text-xs mt-0.5">Admin</Badge>}
+                      </div>
+                    </div>
+                  </div>
+                  {isAdmin && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem className="gap-2 cursor-pointer" onClick={() => { setShowUserMgmt(true); loadUsers() }}>
+                        <User className="h-4 w-4" />
+                        <span>Manage Users</span>
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="gap-2 cursor-pointer text-destructive" onClick={handleLogout}>
+                    <Trash2 className="h-4 w-4" />
+                    <span>Logout</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => setShowLogin(true)}>
+                <User className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Login</span>
+              </Button>
+            )}
           </div>
         </div>
       </header>
+
+      {/* ═══ Login Dialog ═══ */}
+      {showLogin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowLogin(false)}>
+          <Card className="p-6 w-full max-w-sm space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="text-center">
+              <div className="flex h-12 w-12 mx-auto mb-3 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 via-rose-400 to-violet-500">
+                <Wand2 className="h-6 w-6 text-white" />
+              </div>
+              <h3 className="text-lg font-bold">Admin Login</h3>
+              <p className="text-xs text-muted-foreground mt-1">Default: admin@wud.studio / admin123</p>
+            </div>
+            <div className="space-y-3">
+              <Input type="email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} placeholder="Email" className="h-11" />
+              <Input type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} placeholder="Password" className="h-11" onKeyDown={(e) => e.key === 'Enter' && handleLogin()} />
+              <Button onClick={handleLogin} disabled={loginLoading} className="w-full h-11 bg-gradient-to-r from-amber-500 via-rose-400 to-violet-500 text-white">
+                {loginLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                {loginLoading ? 'Logging in...' : 'Login'}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ═══ Title Generator Dialog ═══ */}
+      {showTitleGen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowTitleGen(false)}>
+          <Card className="p-6 w-full max-w-lg space-y-4 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Lightbulb className="h-5 w-5 text-amber-500" />
+                <h3 className="text-lg font-bold">Title Generator</h3>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setShowTitleGen(false)}>✕</Button>
+            </div>
+            <p className="text-xs text-muted-foreground">AI-generated titles for: <span className="font-semibold text-foreground">{topic}</span></p>
+            {/* Style selector */}
+            <div className="flex flex-wrap gap-1.5">
+              {['viral', 'educational', 'question', 'shocking', 'listicle'].map((s) => (
+                <button key={s} onClick={() => setTitleGenStyle(s)}
+                  className={`text-xs px-3 py-1.5 rounded-xl font-bold transition-all border ${titleGenStyle === s ? 'border-primary bg-primary/10' : 'border-transparent bg-muted/50 text-muted-foreground hover:text-foreground'}`}>
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                </button>
+              ))}
+            </div>
+            <Button onClick={generateTitles} disabled={titleGenLoading} size="sm" className="w-full">
+              {titleGenLoading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</> : <><Sparkles className="h-4 w-4 mr-2" />Generate 10 Titles</>}
+            </Button>
+            {/* Results */}
+            <div className="space-y-2">
+              {titleGenLoading && titleGenResults.length === 0 && (
+                <div className="space-y-2">
+                  {[1,2,3,4,5].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+                </div>
+              )}
+              {titleGenResults.map((t, i) => (
+                <div key={i} className="flex items-center gap-2 rounded-lg border p-3 hover:bg-accent/50 transition-colors group">
+                  <span className="font-mono text-xs text-muted-foreground w-6">{String(i+1).padStart(2,'0')}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{t.title}</div>
+                    {t.hook && <div className="text-xs text-muted-foreground truncate">💬 {t.hook}</div>}
+                  </div>
+                  <button onClick={() => { setTopic(t.title); setShowTitleGen(false); toast.success('Title applied!') }} className="opacity-0 group-hover:opacity-100 text-xs text-primary hover:underline shrink-0">Use</button>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ═══ User Management Dialog (admin only) ═══ */}
+      {showUserMgmt && isAdmin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowUserMgmt(false)}>
+          <Card className="p-6 w-full max-w-lg space-y-4 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold flex items-center gap-2"><User className="h-5 w-5" /> User Management</h3>
+              <Button size="sm" variant="ghost" onClick={() => setShowUserMgmt(false)}>✕</Button>
+            </div>
+            {/* Add user form */}
+            <div className="space-y-2 rounded-lg border p-3">
+              <div className="text-xs font-bold uppercase text-muted-foreground">Add New User</div>
+              <Input value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} placeholder="Email" className="h-9 text-sm" />
+              <Input value={newUserName} onChange={(e) => setNewUserName(e.target.value)} placeholder="Name (optional)" className="h-9 text-sm" />
+              <Input type="password" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} placeholder="Password" className="h-9 text-sm" />
+              <div className="flex items-center gap-2">
+                <select value={newUserRole} onChange={(e) => setNewUserRole(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-2 text-sm flex-1">
+                  <option value="user">User</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <Button size="sm" onClick={addUser} className="shrink-0">Add User</Button>
+              </div>
+            </div>
+            {/* Users list */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-bold uppercase text-muted-foreground">Users ({users.length})</div>
+                <Button size="sm" variant="ghost" onClick={loadUsers} disabled={usersLoading}>{usersLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} Refresh</Button>
+              </div>
+              {users.map((u) => (
+                <div key={u.id} className="flex items-center gap-2 rounded-lg border p-3 group">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-amber-500 via-rose-400 to-violet-500">
+                    <User className="h-4 w-4 text-white" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{u.name || u.email}</div>
+                    <div className="text-xs text-muted-foreground truncate">{u.email}</div>
+                  </div>
+                  {u.role === 'admin' && <Badge variant="secondary" className="text-xs">Admin</Badge>}
+                  <button onClick={() => deleteUser(u.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* ═══ Main ═══ */}
       <main className="flex-1 container mx-auto px-4 py-6 max-w-4xl">
