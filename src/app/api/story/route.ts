@@ -82,14 +82,26 @@ Rules:
     });
 
     const raw = completion.choices[0]?.message?.content ?? "";
-    const cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+    let cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+    const jsonStart = cleaned.indexOf("{");
+    const jsonEnd = cleaned.lastIndexOf("}");
+    if (jsonStart > 0) {
+      cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+    }
     let parsed: any;
     try {
       parsed = JSON.parse(cleaned);
     } catch {
       const m = cleaned.match(/\{[\s\S]*\}/);
-      if (m) parsed = JSON.parse(m[0]);
-      else throw new Error("AI returned invalid JSON");
+      if (m) {
+        try {
+          parsed = JSON.parse(m[0]);
+        } catch {
+          throw new Error("AI returned invalid JSON: " + cleaned.substring(0, 100));
+        }
+      } else {
+        throw new Error("AI returned no JSON: " + cleaned.substring(0, 100));
+      }
     }
 
     return NextResponse.json(parsed);

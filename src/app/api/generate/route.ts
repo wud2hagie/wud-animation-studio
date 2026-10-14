@@ -100,14 +100,29 @@ Rules:
     });
 
     const raw = completion.choices[0]?.message?.content ?? "";
-    const cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+    // Robust JSON extraction: strip markdown, find the first { and last }, parse
+    let cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+    // If the response starts with non-JSON text (like # Title or "Here is..."), find the first {
+    const jsonStart = cleaned.indexOf("{");
+    const jsonEnd = cleaned.lastIndexOf("}");
+    if (jsonStart > 0) {
+      cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+    }
     let parsed: any;
     try {
       parsed = JSON.parse(cleaned);
     } catch {
+      // Try to find any JSON object in the text
       const m = cleaned.match(/\{[\s\S]*\}/);
-      if (m) parsed = JSON.parse(m[0]);
-      else throw new Error("AI returned invalid JSON");
+      if (m) {
+        try {
+          parsed = JSON.parse(m[0]);
+        } catch {
+          throw new Error("AI returned invalid JSON: " + cleaned.substring(0, 100));
+        }
+      } else {
+        throw new Error("AI returned no JSON: " + cleaned.substring(0, 100));
+      }
     }
 
     return NextResponse.json(parsed);

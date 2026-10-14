@@ -32,6 +32,7 @@ import {
   Newspaper, GraduationCap, Star, ShieldQuestion, UserCircle, Eye,
   Layers, Timer, GitCompare, Trophy, FlaskConical, Drama, Smile,
   Zap, TrendingUp, Brain, Clapperboard, Video, MonitorPlay, FileVideo,
+  RefreshCw, Shuffle, Eye as EyeIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -714,6 +715,37 @@ export default function Home() {
   }
 
   function clearHistory() { saveHistory([]); toast.success('History cleared') }
+
+  // ─── Topic Suggestions ──────────────────────────────────
+
+  const TOPIC_SUGGESTIONS = [
+    'Why is the sky blue?',
+    '5 amazing facts about Ethiopia',
+    'The mystery of black holes',
+    'How do bees make honey?',
+    'The speed of light explained',
+    'Why volcanoes erupt',
+    'How memory works in the brain',
+    'The history of coffee',
+    'Why rainbows form',
+    'Spider silk is stronger than steel',
+    'Why we yawn when others do',
+    'How trees talk to each other',
+    'The power of nuclear fusion',
+    'What if you fell into a black hole?',
+    'The Great Wall of China myth',
+    'Why octopuses have 3 hearts',
+    'How do earthquakes happen',
+    'The science of dreams',
+    'Why time feels faster as you age',
+    'The deepest point on Earth',
+  ]
+
+  function fillTopicSuggestion() {
+    const random = TOPIC_SUGGESTIONS[Math.floor(Math.random() * TOPIC_SUGGESTIONS.length)]
+    setTopic(random)
+    toast.info(`Suggestion: ${random}`)
+  }
   function deleteHistoryItem(id: string) { saveHistory(history.filter((h) => h.id !== id)) }
   function loadFromHistory(item: HistoryItem) {
     setTopic(item.topic); setMode(item.mode); setResult(item.result); setSceneImages({})
@@ -1047,13 +1079,25 @@ export default function Home() {
 
           {/* Topic Input + Generate */}
           <div className="space-y-3">
-            <Input
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && generate()}
-              placeholder="Type your topic... e.g. 'The mystery of black holes' or '5 amazing facts about Ethiopia'"
-              className="h-14 text-base"
-            />
+            <div className="flex gap-2">
+              <Input
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && generate()}
+                placeholder="Type your topic... e.g. 'The mystery of black holes'"
+                className="h-14 text-base flex-1"
+              />
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="outline" size="icon" className="h-14 w-14 shrink-0" onClick={fillTopicSuggestion} disabled={loading}>
+                      <Shuffle className="h-5 w-5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Random topic suggestion</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
             <Button
               onClick={generate}
               disabled={loading || !topic.trim()}
@@ -1118,7 +1162,19 @@ export default function Home() {
                 <Card className="p-6 space-y-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-xl font-bold">{result.title}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-xl font-bold">{result.title}</h3>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button size="sm" variant="ghost" onClick={generate} disabled={loading} className="h-7 w-7 p-0 shrink-0">
+                                <RefreshCw className="h-3.5 w-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Regenerate with same topic</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
                       {result.hook && <p className="text-sm italic text-amber-500 mt-1">"{result.hook}"</p>}
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
@@ -1128,8 +1184,8 @@ export default function Home() {
                   </div>
 
                   {/* Generate All Images button */}
-                  <div className="flex justify-end">
-                    <Button size="sm" variant="outline" onClick={generateAllImages} className="gap-1.5">
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant="outline" onClick={generateAllImages} className="gap-1.5" disabled={loading}>
                       <ImageIcon className="h-3.5 w-3.5" />
                       Generate All Images
                     </Button>
