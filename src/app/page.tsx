@@ -369,108 +369,348 @@ export default function Home() {
     downloadFile(md, `${safeName()}.md`, 'text/markdown')
   }
 
-  // ─── Video Rendering ───────────────────────────────────
+  // ─── Video Rendering (Canvas + MediaRecorder = REAL video file) ────
+
+  // Background colors for canvas rendering
+  const CANVAS_BG: Record<string, [string, string]> = {
+    'solid-black': ['#000000', '#000000'],
+    'neon-gradient': ['#FFB627', '#6366F1'],
+    'starfield': ['#0A0E1A', '#1a0033'],
+    'aurora': ['#00F2EA', '#FF0050'],
+    'grid': ['#0a0a0c', '#1a1a2e'],
+    'image': ['#1a0033', '#00F2EA'],
+  }
 
   async function renderVideo(format: string) {
     if (!result?.scenes || rendering) return
     setRendering(true)
     setRenderProgress(0)
-    toast.info(`Rendering video as ${format.toUpperCase()}...`)
-
-    const progressInterval = setInterval(() => {
-      setRenderProgress((p) => Math.min(p + Math.random() * 8, 95))
-    }, 500)
+    toast.info(`Rendering real ${format.toUpperCase()} video...`)
 
     try {
-      const res = await fetch('/api/render', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scenes: result.scenes,
-          title: result.title,
-          format,
-        }),
-      })
-      const data = await res.json()
+      // Step 1: Try AI video API first (best quality)
+      setRenderProgress(5)
+      toast.info('Trying AI video generation...')
 
-      if (data.videoUrl) {
-        // Download the actual video file
-        setRenderProgress(100)
-        // Fetch the video and download it
-        try {
-          const videoRes = await fetch(data.videoUrl)
-          const blob = await videoRes.blob()
-          const url = URL.createObjectURL(blob)
-          const a = document.createElement('a')
-          a.href = url
-          a.download = `${safeName()}.${format}`
-          document.body.appendChild(a)
-          a.click()
-          document.body.removeChild(a)
-          URL.revokeObjectURL(url)
-          toast.success(`Video downloaded as ${format.toUpperCase()}!`)
-        } catch {
-          // If fetch fails (CORS), open in new tab
-          window.open(data.videoUrl, '_blank')
-          toast.success(`Video opened in new tab — right-click to save as ${format.toUpperCase()}`)
+      let aiVideoUrl: string | null = null
+      try {
+        const aiRes = await fetch('/api/render', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scenes: result.scenes, title: result.title, format }),
+        })
+        const aiData = await aiRes.json()
+        if (aiData.videoUrl) {
+          aiVideoUrl = aiData.videoUrl
+          setRenderProgress(100)
+          // Download the AI-generated video
+          await downloadVideoFromUrl(aiVideoUrl, format)
+          toast.success(`AI video downloaded as ${format.toUpperCase()}!`)
+          return
         }
-      } else if (data.fallback) {
-        // Fallback: download the project file that contains all scene data
-        // for use in video editors
-        const projectData = {
-          title: result.title,
-          format,
-          scenes: result.scenes,
-          totalDuration,
-          resolution: selectedRes,
-          language: selectedLang?.code,
-          exportedAt: new Date().toISOString(),
-        }
-        downloadFile(JSON.stringify(projectData, null, 2), `${safeName()}_${format}_project.json`)
-        toast.info(`AI video rendering is processing. Downloaded project file for ${format.toUpperCase()} instead.`)
-      } else if (data.taskId && data.status === 'processing') {
-        toast.info('Video is still rendering on the server. This may take a few minutes.')
-        // Poll for result
-        let attempts = 0
-        const maxAttempts = 40
-        while (attempts < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 5000))
-          attempts++
-          const pollRes = await fetch('/api/render', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ taskId: data.taskId, poll: true }),
-          })
-          const pollData = await pollRes.json()
-          if (pollData.videoUrl) {
-            const videoRes = await fetch(pollData.videoUrl)
-            const blob = await videoRes.blob()
-            const url = URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = url
-            a.download = `${safeName()}.${format}`
-            document.body.appendChild(a)
-            a.click()
-            document.body.removeChild(a)
-            URL.revokeObjectURL(url)
-            toast.success(`Video downloaded as ${format.toUpperCase()}!`)
-            break
-          }
-          if (pollData.task_status === 'FAIL') {
-            throw new Error('Video rendering failed on server')
-          }
-          setRenderProgress(Math.min(95, (attempts / maxAttempts) * 100))
-        }
+      } catch {
+        // AI video failed — fall through to client-side rendering
+      }
+
+      // Step 2: Client-side Canvas rendering (produces REAL WebM video)
+      setRenderProgress(10)
+      toast.info('Rendering video with Canvas engine...')
+
+      const videoBlob = await renderScenesToVideo(result.scenes, (p) => {
+        setRenderProgress(Math.round(10 + p * 85))
+      })
+
+      setRenderProgress(100)
+
+      // Download the real video blob
+      const ext = format === 'webm' ? 'webm' : format === 'mp4' ? 'webm' : 'webm'
+      const filename = `${safeName()}.${ext}`
+      const url = URL.createObjectURL(videoBlob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      if (format !== 'webm') {
+        toast.success(`Video downloaded as WebM (${format.toUpperCase()} requested). Convert to ${format.toUpperCase()} with any video converter if needed.`)
       } else {
-        throw new Error(data.error || 'Unknown render response')
+        toast.success(`Video downloaded as WebM!`)
       }
     } catch (e: any) {
-      toast.error(`Render: ${e.message}`)
+      toast.error(`Render failed: ${e.message}`)
     } finally {
-      clearInterval(progressInterval)
       setRendering(false)
       setTimeout(() => setRenderProgress(0), 1500)
     }
+  }
+
+  async function downloadVideoFromUrl(url: string, format: string) {
+    try {
+      const res = await fetch(url)
+      const blob = await res.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = `${safeName()}.${format}`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(blobUrl)
+    } catch {
+      window.open(url, '_blank')
+    }
+  }
+
+  // Render scenes to a real video using Canvas + MediaRecorder
+  async function renderScenesToVideo(scenes: Scene[], onProgress: (p: number) => void): Promise<Blob> {
+    const width = 720
+    const height = 1280
+    const fps = 30
+    const totalDuration = scenes.reduce((a, s) => a + s.durationSec, 0)
+    const totalFrames = Math.floor(totalDuration * fps)
+
+    // Create canvas
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')!
+
+    // Setup MediaRecorder
+    const stream = canvas.captureStream(fps)
+
+    // Try to get audio from TTS for the first scene (optional)
+    let audioStream: MediaStream | null = null
+    try {
+      const audioCtx = new AudioContext()
+      const dest = audioCtx.createMediaStreamDestination()
+
+      // Fetch TTS for each scene and schedule them
+      let startTime = 0
+      for (const s of scenes) {
+        if (s.voiceover) {
+          try {
+            const ttsRes = await fetch('/api/voice', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: s.voiceover, language: selectedLang?.code || 'en' }),
+            })
+            const ttsData = await ttsRes.json()
+            if (ttsData.audio) {
+              const audioRes = await fetch(ttsData.audio)
+              const audioBuf = await audioRes.arrayBuffer()
+              const decoded = await audioCtx.decodeAudioData(audioBuf)
+              const src = audioCtx.createBufferSource()
+              src.buffer = decoded
+              src.connect(dest)
+              src.start(startTime)
+            }
+          } catch {}
+        }
+        startTime += s.durationSec
+      }
+      if (dest.stream.getAudioTracks().length > 0) {
+        audioStream = dest.stream
+        stream.addTrack(dest.stream.getAudioTracks()[0])
+      }
+    } catch {}
+
+    // Find the best supported mime type
+    const mimeTypes = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm',
+    ]
+    let mimeType = 'video/webm'
+    for (const m of mimeTypes) {
+      if (MediaRecorder.isTypeSupported(m)) { mimeType = m; break }
+    }
+
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4_000_000 })
+    const chunks: Blob[] = []
+    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
+
+    const done = new Promise<Blob>((resolve) => {
+      recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }))
+    })
+
+    recorder.start()
+
+    // Preload any AI-generated scene images
+    const sceneImages: (HTMLImageElement | null)[] = []
+    for (let i = 0; i < scenes.length; i++) {
+      if (sceneImages[i]) {
+        const img = new Image()
+        img.crossOrigin = 'anonymous'
+        await new Promise<void>((r) => { img.onload = () => r(); img.onerror = () => r(); img.src = sceneImages[i] })
+        sceneImages[i] = img
+      } else {
+        sceneImages[i] = null
+      }
+    }
+
+    // Render each frame
+    for (let frame = 0; frame < totalFrames; frame++) {
+      const currentTime = frame / fps
+
+      // Find current scene
+      let sceneIdx = 0
+      let sceneProgress = 0
+      let acc = 0
+      for (let i = 0; i < scenes.length; i++) {
+        const d = scenes[i].durationSec
+        if (currentTime < acc + d) {
+          sceneIdx = i
+          sceneProgress = (currentTime - acc) / d
+          break
+        }
+        acc += d
+        if (i === scenes.length - 1) { sceneIdx = i; sceneProgress = 1 }
+      }
+
+      const scene = scenes[sceneIdx]
+      drawSceneFrame(ctx, scene, sceneProgress, width, height, sceneImages[sceneIdx], frame)
+
+      if (frame % 10 === 0) onProgress(frame / totalFrames)
+
+      // Wait for next frame
+      await new Promise((r) => setTimeout(r, 1000 / fps))
+    }
+
+    recorder.stop()
+    const blob = await done
+    return blob
+  }
+
+  function drawSceneFrame(
+    ctx: CanvasRenderingContext2D,
+    scene: Scene,
+    progress: number,
+    width: number,
+    height: number,
+    image: HTMLImageElement | null,
+    frame: number,
+  ) {
+    const bg = CANVAS_BG[scene.background] || ['#000000', '#000000']
+
+    // Draw gradient background
+    const grad = ctx.createLinearGradient(0, 0, width, height)
+    grad.addColorStop(0, bg[0])
+    grad.addColorStop(1, bg[1])
+    ctx.fillStyle = grad
+    ctx.fillRect(0, 0, width, height)
+
+    // Draw AI image if available
+    if (image) {
+      try {
+        ctx.globalAlpha = 0.7
+        ctx.drawImage(image, 0, 0, width, height)
+        ctx.globalAlpha = 1
+      } catch {}
+    }
+
+    // Draw starfield for starfield background
+    if (scene.background === 'starfield') {
+      ctx.fillStyle = '#ffffff'
+      for (let i = 0; i < 50; i++) {
+        const x = (i * 137 + frame * 0.5) % width
+        const y = (i * 211 + frame * 0.3) % height
+        const size = (i % 3) + 1
+        ctx.globalAlpha = 0.3 + 0.3 * Math.sin(frame * 0.02 + i)
+        ctx.fillRect(x, y, size, size)
+      }
+      ctx.globalAlpha = 1
+    }
+
+    // Draw grid for grid background
+    if (scene.background === 'grid') {
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)'
+      ctx.lineWidth = 1
+      for (let x = 0; x < width; x += 48) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke()
+      }
+      for (let y = 0; y < height; y += 48) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke()
+      }
+    }
+
+    // Draw scene title with animation
+    const fadeIn = Math.min(progress * 5, 1)
+    const fadeOut = progress > 0.8 ? Math.max(1 - (progress - 0.8) * 5, 0) : 1
+    const alpha = fadeIn * fadeOut
+
+    ctx.globalAlpha = alpha
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+
+    // Title
+    const titleY = height / 2
+    const fontSize = Math.min(width * 0.06, 48)
+    ctx.font = `bold ${fontSize}px sans-serif`
+
+    // Title shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'
+    ctx.fillText(scene.title || '', width / 2 + 3, titleY + 3)
+
+    // Title text with gradient
+    const textGrad = ctx.createLinearGradient(0, titleY - fontSize, 0, titleY + fontSize)
+    textGrad.addColorStop(0, '#FFB627')
+    textGrad.addColorStop(0.5, '#FB7185')
+    textGrad.addColorStop(1, '#6366F1')
+    ctx.fillStyle = textGrad
+    ctx.fillText(scene.title || '', width / 2, titleY)
+
+    // Emoji
+    if (scene.emoji) {
+      ctx.font = `${fontSize * 1.5}px sans-serif`
+      ctx.fillText(scene.emoji, width / 2, titleY - fontSize * 1.5)
+    }
+
+    // Voiceover text at bottom
+    if (scene.voiceover) {
+      ctx.font = `${fontSize * 0.4}px sans-serif`
+      ctx.fillStyle = 'rgba(255,255,255,0.8)'
+      ctx.textAlign = 'center'
+      // Wrap text
+      const words = scene.voiceover.split(' ')
+      const lines: string[] = []
+      let currentLine = ''
+      for (const w of words) {
+        const testLine = currentLine ? currentLine + ' ' + w : w
+        if (ctx.measureText(testLine).width > width * 0.8) {
+          if (currentLine) lines.push(currentLine)
+          currentLine = w
+        } else {
+          currentLine = testLine
+        }
+      }
+      if (currentLine) lines.push(currentLine)
+
+      lines.slice(0, 4).forEach((line, i) => {
+        ctx.fillText(line, width / 2, height - 100 + i * fontSize * 0.5)
+      })
+    }
+
+    // Scene type badge at top
+    ctx.font = `bold ${fontSize * 0.35}px sans-serif`
+    ctx.fillStyle = 'rgba(255,255,255,0.3)'
+    ctx.textAlign = 'center'
+    ctx.fillText((scene.type || 'scene').replace('-', ' ').toUpperCase(), width / 2, 60)
+
+    // Progress bar at bottom
+    const barWidth = width * 0.8
+    const barX = (width - barWidth) / 2
+    const barY = height - 40
+    ctx.fillStyle = 'rgba(255,255,255,0.1)'
+    ctx.fillRect(barX, barY, barWidth, 4)
+    ctx.fillStyle = '#FFB627'
+    ctx.fillRect(barX, barY, barWidth * progress, 4)
+
+    ctx.globalAlpha = 1
   }
 
   function clearHistory() { saveHistory([]); toast.success('History cleared') }
