@@ -199,6 +199,92 @@ export default function Home() {
     setTimeout(() => setCopiedField(null), 2000)
   }
 
+  function downloadFile(content: string, filename: string, mimeType = 'application/json') {
+    const blob = new Blob([content], { type: mimeType })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    toast.success(`Downloaded: ${filename}`)
+  }
+
+  function downloadJSON() {
+    if (!result) return
+    const filename = result.title.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase() + '.json'
+    downloadFile(JSON.stringify(result, null, 2), filename)
+  }
+
+  function downloadScript() {
+    if (!result?.scenes) return
+    let script = `# ${result.title}\n# Hook: ${result.hook}\n# Duration: ${totalDuration}s · ${result.scenes.length} scenes\n\n`
+    script += `---\n\n`
+    result.scenes.forEach((s, i) => {
+      script += `## Scene ${String(i + 1).padStart(2, '0')}: ${s.title}\n`
+      script += `Type: ${s.type} | Background: ${s.background} | Duration: ${s.durationSec}s\n\n`
+      if (s.voiceover) script += `[VOICEOVER]\n${s.voiceover}\n\n`
+      if (s.imagePrompt) script += `[IMAGE PROMPT]\n${s.imagePrompt}\n\n`
+      script += `---\n\n`
+    })
+    if (result.hashtagSuggestions?.length) {
+      script += `## Hashtags\n${result.hashtagSuggestions.join(' ')}\n\n`
+    }
+    if (result.whyViral) {
+      script += `## Why Viral\n${result.whyViral}\n`
+    }
+    const filename = result.title.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase() + '_script.txt'
+    downloadFile(script, filename, 'text/plain')
+  }
+
+  function downloadSRT() {
+    if (!result?.scenes) return
+    let srt = ''
+    let timeOffset = 0
+    result.scenes.forEach((s, i) => {
+      const start = timeOffset
+      const end = timeOffset + s.durationSec
+      const fmt = (t: number) => {
+        const h = Math.floor(t / 3600)
+        const m = Math.floor((t % 3600) / 60)
+        const sec = Math.floor(t % 60)
+        const ms = Math.floor((t % 1) * 1000)
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')},${String(ms).padStart(3, '0')}`
+      }
+      srt += `${i + 1}\n`
+      srt += `${fmt(start)} --> ${fmt(end)}\n`
+      srt += `${s.voiceover || s.title}\n\n`
+      timeOffset = end
+    })
+    const filename = result.title.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase() + '.srt'
+    downloadFile(srt, filename, 'text/plain')
+  }
+
+  function downloadMarkdown() {
+    if (!result) return
+    let md = `# ${result.title}\n\n`
+    md += `> ${result.hook}\n\n`
+    if (result.whyViral) md += `**Why viral:** ${result.whyViral}\n\n`
+    md += `## Scenes (${totalDuration}s · ${result.scenes.length} scenes)\n\n`
+    result.scenes.forEach((s, i) => {
+      md += `### ${String(i + 1).padStart(2, '0')}. ${s.title}\n`
+      md += `- **Type:** ${s.type}\n`
+      md += `- **Background:** ${s.background}\n`
+      md += `- **Duration:** ${s.durationSec}s\n`
+      if (s.voiceover) md += `- **Voiceover:** ${s.voiceover}\n`
+      if (s.imagePrompt) md += `- **Image:** ${s.imagePrompt}\n`
+      md += `\n`
+    })
+    if (result.hashtagSuggestions?.length) {
+      md += `## Hashtags\n\n`
+      md += result.hashtagSuggestions.map((t) => `\`${t}\``).join(' ') + '\n'
+    }
+    const filename = result.title.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase() + '.md'
+    downloadFile(md, filename, 'text/markdown')
+  }
+
   function clearHistory() {
     saveHistory([])
     toast.success('History cleared')
@@ -576,6 +662,7 @@ export default function Home() {
 
                   {/* Action buttons */}
                   <div className="flex flex-wrap gap-2">
+                    {/* Copy buttons */}
                     <Button size="sm" variant="outline" onClick={() => copyToClipboard(JSON.stringify(result, null, 2), 'json')}>
                       {copiedField === 'json' ? <Check className="h-3.5 w-3.5 mr-1" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
                       Copy JSON
@@ -588,6 +675,26 @@ export default function Home() {
                       {copiedField === 'hook' ? <Check className="h-3.5 w-3.5 mr-1" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
                       Copy Hook
                     </Button>
+
+                    <Separator orientation="vertical" className="h-7" />
+
+                    {/* Download buttons */}
+                    <Button size="sm" className="gap-1.5 bg-gradient-to-r from-amber-500 via-rose-400 to-violet-500 text-white" onClick={downloadJSON}>
+                      <Download className="h-3.5 w-3.5" />
+                      Download JSON
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={downloadScript}>
+                      <Download className="h-3.5 w-3.5 mr-1" />
+                      Script (.txt)
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={downloadSRT}>
+                      <Download className="h-3.5 w-3.5 mr-1" />
+                      Subtitles (.srt)
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={downloadMarkdown}>
+                      <Download className="h-3.5 w-3.5 mr-1" />
+                      Markdown (.md)
+                    </Button>
                   </div>
                 </Card>
               </TabsContent>
@@ -595,7 +702,26 @@ export default function Home() {
               {/* ─── Tab: Script ─── */}
               <TabsContent value="script" className="mt-4">
                 <Card className="p-6">
-                  <h3 className="text-base font-bold mb-3">Voiceover Script</h3>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-base font-bold">Voiceover Script</h3>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => copyToClipboard(
+                        result.scenes.map((s, i) => `${String(i + 1).padStart(2, '0')}. [${s.durationSec}s] ${s.voiceover || s.title}`).join('\n\n'),
+                        'script'
+                      )}>
+                        {copiedField === 'script' ? <Check className="h-3.5 w-3.5 mr-1" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
+                        Copy Script
+                      </Button>
+                      <Button size="sm" onClick={downloadScript} className="bg-gradient-to-r from-amber-500 via-rose-400 to-violet-500 text-white">
+                        <Download className="h-3.5 w-3.5 mr-1" />
+                        Download .txt
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={downloadSRT}>
+                        <Download className="h-3.5 w-3.5 mr-1" />
+                        .srt
+                      </Button>
+                    </div>
+                  </div>
                   <ScrollArea className="h-96 rounded-lg border p-4">
                     <div className="space-y-4">
                       {result.scenes?.map((s, i) => (
