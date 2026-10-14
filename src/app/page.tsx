@@ -31,7 +31,7 @@ import {
   Play, Pause, Volume2, Image as ImageIcon, Lightbulb, BookOpen, HelpCircle,
   Newspaper, GraduationCap, Star, ShieldQuestion, UserCircle, Eye,
   Layers, Timer, GitCompare, Trophy, FlaskConical, Drama, Smile,
-  Zap, TrendingUp, Brain, Clapperboard,
+  Zap, TrendingUp, Brain, Clapperboard, Video, MonitorPlay, FileVideo,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -166,6 +166,8 @@ export default function Home() {
   const [sceneImages, setSceneImages] = useState<Record<number, string>>({})
   const [imageLoading, setImageLoading] = useState<Record<number, boolean>>({})
   const [audioPlaying, setAudioPlaying] = useState<number | null>(null)
+  const [rendering, setRendering] = useState(false)
+  const [renderProgress, setRenderProgress] = useState(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
   useEffect(() => {
@@ -365,6 +367,110 @@ export default function Home() {
     })
     if (result.hashtagSuggestions?.length) md += `\n## Hashtags\n\n${result.hashtagSuggestions.map((t) => `\`${t}\``).join(' ')}\n`
     downloadFile(md, `${safeName()}.md`, 'text/markdown')
+  }
+
+  // ─── Video Rendering ───────────────────────────────────
+
+  async function renderVideo(format: string) {
+    if (!result?.scenes || rendering) return
+    setRendering(true)
+    setRenderProgress(0)
+    toast.info(`Rendering video as ${format.toUpperCase()}...`)
+
+    const progressInterval = setInterval(() => {
+      setRenderProgress((p) => Math.min(p + Math.random() * 8, 95))
+    }, 500)
+
+    try {
+      const res = await fetch('/api/render', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scenes: result.scenes,
+          title: result.title,
+          format,
+        }),
+      })
+      const data = await res.json()
+
+      if (data.videoUrl) {
+        // Download the actual video file
+        setRenderProgress(100)
+        // Fetch the video and download it
+        try {
+          const videoRes = await fetch(data.videoUrl)
+          const blob = await videoRes.blob()
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `${safeName()}.${format}`
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+          URL.revokeObjectURL(url)
+          toast.success(`Video downloaded as ${format.toUpperCase()}!`)
+        } catch {
+          // If fetch fails (CORS), open in new tab
+          window.open(data.videoUrl, '_blank')
+          toast.success(`Video opened in new tab — right-click to save as ${format.toUpperCase()}`)
+        }
+      } else if (data.fallback) {
+        // Fallback: download the project file that contains all scene data
+        // for use in video editors
+        const projectData = {
+          title: result.title,
+          format,
+          scenes: result.scenes,
+          totalDuration,
+          resolution: selectedRes,
+          language: selectedLang?.code,
+          exportedAt: new Date().toISOString(),
+        }
+        downloadFile(JSON.stringify(projectData, null, 2), `${safeName()}_${format}_project.json`)
+        toast.info(`AI video rendering is processing. Downloaded project file for ${format.toUpperCase()} instead.`)
+      } else if (data.taskId && data.status === 'processing') {
+        toast.info('Video is still rendering on the server. This may take a few minutes.')
+        // Poll for result
+        let attempts = 0
+        const maxAttempts = 40
+        while (attempts < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 5000))
+          attempts++
+          const pollRes = await fetch('/api/render', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ taskId: data.taskId, poll: true }),
+          })
+          const pollData = await pollRes.json()
+          if (pollData.videoUrl) {
+            const videoRes = await fetch(pollData.videoUrl)
+            const blob = await videoRes.blob()
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `${safeName()}.${format}`
+            document.body.appendChild(a)
+            a.click()
+            document.body.removeChild(a)
+            URL.revokeObjectURL(url)
+            toast.success(`Video downloaded as ${format.toUpperCase()}!`)
+            break
+          }
+          if (pollData.task_status === 'FAIL') {
+            throw new Error('Video rendering failed on server')
+          }
+          setRenderProgress(Math.min(95, (attempts / maxAttempts) * 100))
+        }
+      } else {
+        throw new Error(data.error || 'Unknown render response')
+      }
+    } catch (e: any) {
+      toast.error(`Render: ${e.message}`)
+    } finally {
+      clearInterval(progressInterval)
+      setRendering(false)
+      setTimeout(() => setRenderProgress(0), 1500)
+    }
   }
 
   function clearHistory() { saveHistory([]); toast.success('History cleared') }
@@ -584,15 +690,58 @@ export default function Home() {
             {/* ─── Download ─── */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-1.5 shrink-0" disabled={!hasResult}>
-                  <Download className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Download</span>
-                  <ChevronDown className="h-3 w-3" />
+                <Button variant="ghost" size="sm" className="gap-1.5 shrink-0" disabled={!hasResult || rendering}>
+                  {rendering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                  <span className="hidden sm:inline">{rendering ? `Rendering ${Math.round(renderProgress)}%` : 'Download'}</span>
+                  {!rendering && <ChevronDown className="h-3 w-3" />}
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-56">
+              <DropdownMenuContent className="w-64">
                 <DropdownMenuLabel>Download As</DropdownMenuLabel>
                 <DropdownMenuSeparator />
+
+                {/* Video formats */}
+                <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60">Video Formats</div>
+                <DropdownMenuItem onClick={() => renderVideo('mp4')} className="gap-2 cursor-pointer" disabled={rendering}>
+                  <FileVideo className="h-4 w-4 text-rose-500" />
+                  <div>
+                    <div className="text-sm font-medium">MP4 Video</div>
+                    <div className="text-xs text-muted-foreground">Most compatible · YouTube/TikTok</div>
+                  </div>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => renderVideo('webm')} className="gap-2 cursor-pointer" disabled={rendering}>
+                  <FileVideo className="h-4 w-4 text-violet-500" />
+                  <div>
+                    <div className="text-sm font-medium">WebM Video</div>
+                    <div className="text-xs text-muted-foreground">Smallest size · web-optimized</div>
+                  </div>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => renderVideo('avi')} className="gap-2 cursor-pointer" disabled={rendering}>
+                  <FileVideo className="h-4 w-4 text-amber-500" />
+                  <div>
+                    <div className="text-sm font-medium">AVI Video</div>
+                    <div className="text-xs text-muted-foreground">Uncompressed · video editing</div>
+                  </div>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => renderVideo('mov')} className="gap-2 cursor-pointer" disabled={rendering}>
+                  <FileVideo className="h-4 w-4 text-cyan-500" />
+                  <div>
+                    <div className="text-sm font-medium">MOV Video</div>
+                    <div className="text-xs text-muted-foreground">Apple QuickTime · high quality</div>
+                  </div>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => renderVideo('gif')} className="gap-2 cursor-pointer" disabled={rendering}>
+                  <FileVideo className="h-4 w-4 text-emerald-500" />
+                  <div>
+                    <div className="text-sm font-medium">GIF Animation</div>
+                    <div className="text-xs text-muted-foreground">Looping · social media</div>
+                  </div>
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+
+                {/* Document formats */}
+                <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60">Document Formats</div>
                 <DropdownMenuItem onClick={downloadJSON} className="gap-2 cursor-pointer">
                   <FileJson className="h-4 w-4 text-amber-500" />
                   <div><div className="text-sm font-medium">JSON</div><div className="text-xs text-muted-foreground">Full structured outline</div></div>
