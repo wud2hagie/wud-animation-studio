@@ -1,0 +1,4 @@
+[install]
+# Skip musl variants on glibc systems — they fail to extract
+# The gnu variant (@swc/core-linux-x64-gnu) is already installed
+optional = true
