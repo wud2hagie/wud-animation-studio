@@ -8,7 +8,6 @@ export async function POST(req: NextRequest) {
     const contentMode = body?.contentMode ?? "auto";
     const language = body?.language ?? "en";
     const tone = body?.tone ?? "educational";
-    const resolution = body?.resolution ?? "720p";
 
     if (!topic) {
       return NextResponse.json({ error: "Topic required" }, { status: 400 });
@@ -16,10 +15,10 @@ export async function POST(req: NextRequest) {
 
     const zai = await ZAI.create();
 
-    // Build mode-specific instructions
+    // Mode-specific instructions
     const modeInstructions: Record<string, string> = {
       auto: "AI chooses the best format automatically",
-      quiz: "Create a timed trivia quiz with countdown timer and answer reveal at the end",
+      quiz: "Create a timed trivia quiz with countdown timer and answer reveal",
       facts: "Create 5-6 amazing facts, each with its own dedicated scene",
       guinness: "Focus on Guinness World Records with record-breaking statistics",
       travel: "Include a map scene with real lat/lng coordinates for travel destinations",
@@ -34,6 +33,20 @@ export async function POST(req: NextRequest) {
       space: "Space exploration, astronomy, and universe facts",
       math: "Math problems solved step-by-step with clear explanations",
       music: "Music theory, instruments, and famous composers",
+      storytelling: "Narrative-driven story with character arcs — setup, conflict, resolution. 2-3 characters with dialogue.",
+      cartoon: "Animated cartoon-style with exaggerated humor. Characters are expressive and comedic.",
+      documentary: "Documentary format mixing data-motion (stats), pictorial (archival), character-story (expert quotes). Narrator-driven.",
+      news: "Breaking news format. Start with headline, present facts objectively, end with summary.",
+      tutorial: "Step-by-step tutorial. Each scene is one step with clear instructions.",
+      review: "Product/topic review with pros, cons, and a final rating.",
+      mythbusting: "Present a myth, then bust it with real data. Explain why the myth persists.",
+      biography: "Biographical timeline — each scene is a life period with key achievements.",
+      mystery: "Build suspense throughout. Reveal the answer in the final scene.",
+      timelapse: "Show progression over time — each scene is a different time period.",
+      comparison: "Compare two things side by side. Use data-motion for comparison stats.",
+      top10: "Countdown format — start from #10 and build to #1. Each scene is one item.",
+      didyouknow: "Surprising 'did you know' facts that challenge common assumptions.",
+      experiment: "Show a science experiment step by step with expected vs actual results.",
     };
 
     const completion = await zai.chat.completions.create({
@@ -45,9 +58,8 @@ export async function POST(req: NextRequest) {
 Content mode: ${contentMode} — ${modeInstructions[contentMode] || modeInstructions.auto}
 Language: ${language}
 Tone: ${tone}
-Resolution: ${resolution}
 
-Output ONLY valid JSON, no markdown, no prose:
+Output ONLY valid JSON, no markdown:
 {
   "title": "Catchy title under 80 chars",
   "hook": "First 3-second hook that stops scrolling",
@@ -55,25 +67,27 @@ Output ONLY valid JSON, no markdown, no prose:
   "hashtagSuggestions": ["#fyp", "#learn", "#educational"],
   "scenes": [
     {
-      "type": "kinetic-text" | "data-motion" | "character-story" | "abstract-motion",
+      "type": "kinetic-text" | "data-motion" | "character-story" | "abstract-motion" | "pictorial" | "map" | "quiz" | "math",
       "title": "Scene title",
       "durationSec": 4,
-      "background": "solid-black" | "neon-gradient" | "starfield" | "aurora",
+      "background": "solid-black" | "neon-gradient" | "starfield" | "aurora" | "grid" | "image",
       "content": {},
       "voiceover": "Spoken narration for this scene (1-2 sentences)",
-      "imagePrompt": "Visual description for AI image generation"
+      "imagePrompt": "Visual description for AI image generation",
+      "emoji": "Emoji for this scene"
     }
   ]
 }
 
 Rules:
-- 5-6 scenes, total 25-30 seconds
+- 5-8 scenes, 25-45 seconds total
 - Start with a kinetic-text hook scene
 - Include at least 1 data-motion scene with real statistics
 - Include at least 1 character-story scene with dialogue
 - End with a call-to-action kinetic-text scene
-- Every scene must have a voiceover line
-- Every scene must have an imagePrompt for AI image generation
+- Every scene must have voiceover text
+- Every scene must have an imagePrompt
+- Every scene must have an emoji
 - Make it educational, surprising, and shareable
 - Adapt to the specified content mode: ${contentMode}
 - Write in ${language} (${tone} tone)`,
@@ -81,8 +95,8 @@ Rules:
         { role: "user", content: `Topic: ${topic}` },
       ],
       thinking: { type: "disabled" },
-      temperature: 0.8,
-      max_tokens: 2000,
+      temperature: 0.85,
+      max_tokens: 3000,
     });
 
     const raw = completion.choices[0]?.message?.content ?? "";
