@@ -239,8 +239,8 @@ export default function Home() {
           tone: toneInfo?.label?.split(' ')[1] || 'educational', resolution,
         }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed')
+      const data = await res.json().catch(() => ({ error: 'Server returned non-JSON response' }))
+      if (!res.ok) throw new Error(data.error || `Server error (${res.status})`)
       setResult(data)
       setProgress(100)
       setProgressLabel('Done!')

@@ -128,6 +128,7 @@ Rules:
     return NextResponse.json(parsed);
   } catch (e: any) {
     console.error("Generate failed:", e);
-    return NextResponse.json({ error: e?.message ?? "Failed" }, { status: 500 });
+    const errorMsg = e?.message || e?.toString() || "AI generation failed — please try again";
+    return NextResponse.json({ error: errorMsg }, { status: 500 });
   }
 }
