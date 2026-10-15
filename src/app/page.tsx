@@ -184,10 +184,17 @@ export default function Home() {
   const [newUserEmail, setNewUserEmail] = useState('')
   const [newUserName, setNewUserName] = useState('')
   const [newUserPassword, setNewUserPassword] = useState('')
-  const [newUserRole, setNewUserRole] = useState('user')
+  const [newUserRole, setNewUserRole] = useState('viewer')
   const [usersLoading, setUsersLoading] = useState(false)
+  const [showChangePass, setShowChangePass] = useState(false)
+  const [oldPassword, setOldPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [changePassLoading, setChangePassLoading] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
-  const isAdmin = session?.user?.role === 'admin' || (session?.user as any)?.role === 'admin'
+  const userRole = (session?.user as any)?.role
+  const isAdmin = userRole === 'admin'
+  const userPermissions = (session?.user as any)?.permissions || []
+  const canGenerate = isAdmin || userPermissions.includes('generate') || !session?.user
 
   useEffect(() => {
     try {
@@ -781,6 +788,37 @@ export default function Home() {
     window.location.reload()
   }
 
+  // ─── Change Password ───────────────────────────────────
+
+  async function handleChangePassword() {
+    if (!oldPassword.trim() || !newPassword.trim()) {
+      toast.error('Fill in both passwords')
+      return
+    }
+    if (newPassword.length < 4) {
+      toast.error('New password must be at least 4 characters')
+      return
+    }
+    setChangePassLoading(true)
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oldPassword, newPassword }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed')
+      toast.success('Password changed successfully!')
+      setShowChangePass(false)
+      setOldPassword('')
+      setNewPassword('')
+    } catch (e: any) {
+      toast.error(e.message)
+    } finally {
+      setChangePassLoading(false)
+    }
+  }
+
   // ─── Title Generator ───────────────────────────────────
 
   async function generateTitles() {
@@ -1202,10 +1240,23 @@ export default function Home() {
                       <div>
                         <div className="text-sm font-semibold">{session.user.name || 'User'}</div>
                         <div className="text-xs text-muted-foreground">{session.user.email}</div>
-                        {isAdmin && <Badge variant="secondary" className="text-xs mt-0.5">Admin</Badge>}
+                        <div className="flex items-center gap-1 mt-0.5">
+                          {isAdmin ? (
+                            <Badge variant="secondary" className="text-xs bg-amber-500/10 text-amber-500 border-amber-500/20">👑 Admin</Badge>
+                          ) : userRole === 'editor' ? (
+                            <Badge variant="secondary" className="text-xs bg-cyan-500/10 text-cyan-500 border-cyan-500/20">✏️ Editor</Badge>
+                          ) : (
+                            <Badge variant="secondary" className="text-xs">👁️ Viewer</Badge>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="gap-2 cursor-pointer" onClick={() => setShowChangePass(true)}>
+                    <Settings className="h-4 w-4" />
+                    <span>Change Password</span>
+                  </DropdownMenuItem>
                   {isAdmin && (
                     <>
                       <DropdownMenuSeparator />
@@ -1309,6 +1360,15 @@ export default function Home() {
               <h3 className="text-lg font-bold flex items-center gap-2"><User className="h-5 w-5" /> User Management</h3>
               <Button size="sm" variant="ghost" onClick={() => setShowUserMgmt(false)}>✕</Button>
             </div>
+
+            {/* Permission guide */}
+            <div className="rounded-lg border p-3 space-y-1 text-xs text-muted-foreground">
+              <div className="font-bold text-foreground mb-1">Roles & Permissions:</div>
+              <div>👑 <span className="font-semibold">Admin</span> — manage users, generate, download, post, everything</div>
+              <div>✏️ <span className="font-semibold">Editor</span> — generate, download, post, images, voice, titles</div>
+              <div>👁️ <span className="font-semibold">Viewer</span> — view generated content, download only</div>
+            </div>
+
             {/* Add user form */}
             <div className="space-y-2 rounded-lg border p-3">
               <div className="text-xs font-bold uppercase text-muted-foreground">Add New User</div>
@@ -1317,12 +1377,14 @@ export default function Home() {
               <Input type="password" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} placeholder="Password" className="h-9 text-sm" />
               <div className="flex items-center gap-2">
                 <select value={newUserRole} onChange={(e) => setNewUserRole(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-2 text-sm flex-1">
-                  <option value="user">User</option>
-                  <option value="admin">Admin</option>
+                  <option value="viewer">👁️ Viewer (view + download)</option>
+                  <option value="editor">✏️ Editor (generate + download + post)</option>
+                  <option value="admin">👑 Admin (everything)</option>
                 </select>
                 <Button size="sm" onClick={addUser} className="shrink-0">Add User</Button>
               </div>
             </div>
+
             {/* Users list */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -1338,12 +1400,40 @@ export default function Home() {
                     <div className="text-sm font-medium truncate">{u.name || u.email}</div>
                     <div className="text-xs text-muted-foreground truncate">{u.email}</div>
                   </div>
-                  {u.role === 'admin' && <Badge variant="secondary" className="text-xs">Admin</Badge>}
-                  <button onClick={() => deleteUser(u.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  {u.role === 'admin' ? (
+                    <Badge variant="secondary" className="text-xs bg-amber-500/10 text-amber-500 border-amber-500/20">👑 Admin</Badge>
+                  ) : u.role === 'editor' ? (
+                    <Badge variant="secondary" className="text-xs bg-cyan-500/10 text-cyan-500 border-cyan-500/20">✏️ Editor</Badge>
+                  ) : (
+                    <Badge variant="secondary" className="text-xs">👁️ Viewer</Badge>
+                  )}
+                  {u.id !== 'admin-default' && (
+                    <button onClick={() => deleteUser(u.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
               ))}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ═══ Change Password Dialog ═══ */}
+      {showChangePass && session?.user && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowChangePass(false)}>
+          <Card className="p-6 w-full max-w-sm space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold">Change Password</h3>
+              <Button size="sm" variant="ghost" onClick={() => setShowChangePass(false)}>✕</Button>
+            </div>
+            <div className="space-y-3">
+              <Input type="password" value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} placeholder="Current password" className="h-11" />
+              <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="New password (min 4 chars)" className="h-11" onKeyDown={(e) => e.key === 'Enter' && handleChangePassword()} />
+              <Button onClick={handleChangePassword} disabled={changePassLoading} className="w-full h-11 bg-gradient-to-r from-amber-500 via-rose-400 to-violet-500 text-white">
+                {changePassLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                {changePassLoading ? 'Changing...' : 'Change Password'}
+              </Button>
             </div>
           </Card>
         </div>
