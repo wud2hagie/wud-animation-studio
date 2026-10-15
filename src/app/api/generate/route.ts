@@ -53,75 +53,49 @@ export async function POST(req: NextRequest) {
       messages: [
         {
           role: "system",
-          content: `You are a viral TikTok + YouTube Shorts content strategist. Given a topic and content mode, generate a 25-30 second educational video outline.
+          content: `You are a viral short video creator. Generate a video outline for: ${topic}
+Mode: ${contentMode}. Language: ${language}. Tone: ${tone}.
 
-Content mode: ${contentMode} — ${modeInstructions[contentMode] || modeInstructions.auto}
-Language: ${language}
-Tone: ${tone}
+Output ONLY valid JSON (no markdown, no extra text):
+{"title":"Title under 80 chars","hook":"3-second hook","whyViral":"Why viral","hashtagSuggestions":["#fyp","#learn"],"scenes":[{"type":"kinetic-text","title":"Scene title","durationSec":4,"background":"solid-black","content":{},"voiceover":"Narration text","imagePrompt":"Visual description","emoji":"🎬"}]}
 
-Output ONLY valid JSON, no markdown:
-{
-  "title": "Catchy title under 80 chars",
-  "hook": "First 3-second hook that stops scrolling",
-  "whyViral": "Why this would go viral (1 sentence)",
-  "hashtagSuggestions": ["#fyp", "#learn", "#educational"],
-  "scenes": [
-    {
-      "type": "kinetic-text" | "data-motion" | "character-story" | "abstract-motion" | "pictorial" | "map" | "quiz" | "math",
-      "title": "Scene title",
-      "durationSec": 4,
-      "background": "solid-black" | "neon-gradient" | "starfield" | "aurora" | "grid" | "image",
-      "content": {},
-      "voiceover": "Spoken narration for this scene (1-2 sentences)",
-      "imagePrompt": "Visual description for AI image generation",
-      "emoji": "Emoji for this scene"
-    }
-  ]
-}
-
-Rules:
-- 5-8 scenes, 25-45 seconds total
-- Start with a kinetic-text hook scene
-- Include at least 1 data-motion scene with real statistics
-- Include at least 1 character-story scene with dialogue
-- End with a call-to-action kinetic-text scene
-- Every scene must have voiceover text
-- Every scene must have an imagePrompt
-- Every scene must have an emoji
-- Make it educational, surprising, and shareable
-- Adapt to the specified content mode: ${contentMode}
-- Write in ${language} (${tone} tone)`,
+Rules: 5 scenes, 25-30s total. Start with kinetic-text hook. End with CTA. Each scene needs voiceover, imagePrompt, and emoji. Keep JSON compact — no extra whitespace or comments.`,
         },
         { role: "user", content: `Topic: ${topic}` },
       ],
       thinking: { type: "disabled" },
       temperature: 0.85,
-      max_tokens: 3000,
+      max_tokens: 4000,
     });
 
     const raw = completion.choices[0]?.message?.content ?? "";
-    // Robust JSON extraction: strip markdown, find the first { and last }, parse
+    // Robust JSON extraction
     let cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-    // If the response starts with non-JSON text (like # Title or "Here is..."), find the first {
     const jsonStart = cleaned.indexOf("{");
     const jsonEnd = cleaned.lastIndexOf("}");
-    if (jsonStart > 0) {
+    if (jsonStart >= 0 && jsonEnd > jsonStart) {
       cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+    }
+    // Fix common JSON issues
+    let fixed = cleaned
+      .replace(/,\s*}/g, "}")   // trailing comma before }
+      .replace(/,\s*]/g, "]");  // trailing comma before ]
+    // If JSON is truncated (missing closing braces), add them
+    const opens = (fixed.match(/{/g) || []).length;
+    const closes = (fixed.match(/}/g) || []).length;
+    if (opens > closes) {
+      fixed += "}".repeat(opens - closes);
     }
     let parsed: any;
     try {
-      parsed = JSON.parse(cleaned);
+      parsed = JSON.parse(fixed);
     } catch {
-      // Try to find any JSON object in the text
-      const m = cleaned.match(/\{[\s\S]*\}/);
+      const m = fixed.match(/\{[\s\S]*\}/);
       if (m) {
-        try {
-          parsed = JSON.parse(m[0]);
-        } catch {
-          throw new Error("AI returned invalid JSON: " + cleaned.substring(0, 100));
-        }
+        try { parsed = JSON.parse(m[0]); }
+        catch { throw new Error("AI returned incomplete JSON. Please try again."); }
       } else {
-        throw new Error("AI returned no JSON: " + cleaned.substring(0, 100));
+        throw new Error("AI returned no JSON. Please try again.");
       }
     }
 
