@@ -1,7 +1,56 @@
-import { getServerSession } from "next-auth";
-import { NextAuthOptions } from "next-auth";
+import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { db } from "@/lib/db";
+
+// Environment-based admin credentials (no database needed — works on Netlify)
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@wud.studio";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+
+// In-memory user store (persists during the server lifecycle)
+interface StoredUser {
+  id: string;
+  email: string;
+  name: string | null;
+  password: string;
+  role: string;
+  createdAt: string;
+}
+
+const users: StoredUser[] = [
+  {
+    id: "admin-default",
+    email: ADMIN_EMAIL,
+    name: "Admin",
+    password: ADMIN_PASSWORD,
+    role: "admin",
+    createdAt: new Date().toISOString(),
+  },
+];
+
+export function getUsers() {
+  return users.map(({ password, ...u }) => u);
+}
+
+export function addUser(email: string, name: string, password: string, role: string) {
+  const existing = users.find((u) => u.email === email);
+  if (existing) throw new Error("User already exists");
+  const user: StoredUser = {
+    id: `user-${Date.now()}`,
+    email,
+    name: name || null,
+    password,
+    role: role === "admin" ? "admin" : "user",
+    createdAt: new Date().toISOString(),
+  };
+  users.push(user);
+  return user;
+}
+
+export function deleteUser(id: string) {
+  const idx = users.findIndex((u) => u.id === id);
+  if (idx === -1) throw new Error("User not found");
+  if (users[idx].id === "admin-default") throw new Error("Cannot delete default admin");
+  users.splice(idx, 1);
+}
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt", maxAge: 60 * 60 * 24 * 7 },
@@ -14,7 +63,7 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
-        const user = await db.user.findUnique({ where: { email: credentials.email } });
+        const user = users.find((u) => u.email === credentials.email);
         if (!user) return null;
         if (user.password !== credentials.password) return null;
         return { id: user.id, email: user.email, name: user.name, role: user.role };
@@ -34,18 +83,3 @@ export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
   pages: { signIn: "/?login=1" },
 };
-
-export async function getAuthSession() {
-  return getServerSession(authOptions);
-}
-
-// Seed a default admin user on first run
-export async function ensureAdminUser() {
-  const adminEmail = "admin@wud.studio";
-  const adminPassword = "admin123";
-  const existing = await db.user.findUnique({ where: { email: adminEmail } });
-  if (!existing) {
-    await db.user.create({ data: { email: adminEmail, password: adminPassword, name: "Admin", role: "admin" } });
-    console.log("Default admin user created:", adminEmail);
-  }
-}

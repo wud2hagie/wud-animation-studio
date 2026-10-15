@@ -1,17 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth/require-admin";
+import { getUsers, addUser, deleteUser } from "@/lib/auth/auth-options";
 
 // GET /api/users — list all users (admin only)
 export async function GET() {
   const auth = await requireAdmin();
   if (!auth.ok) return NextResponse.json({ error: auth.message }, { status: auth.status });
-
-  const users = await db.user.findMany({
-    select: { id: true, email: true, name: true, role: true, createdAt: true },
-    orderBy: { createdAt: "desc" },
-  });
-  return NextResponse.json({ users });
+  return NextResponse.json({ users: getUsers() });
 }
 
 // POST /api/users — add a new user (admin only)
@@ -24,24 +19,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Email and password required" }, { status: 400 });
   }
 
-  const existing = await db.user.findUnique({ where: { email: email.trim() } });
-  if (existing) {
-    return NextResponse.json({ error: "User already exists" }, { status: 400 });
+  try {
+    const user = addUser(email.trim(), name?.trim() || "", password.trim(), role === "admin" ? "admin" : "user");
+    return NextResponse.json({
+      user: { id: user.id, email: user.email, name: user.name, role: user.role },
+      message: "User created successfully",
+    });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 400 });
   }
-
-  const user = await db.user.create({
-    data: {
-      email: email.trim(),
-      name: name?.trim() || null,
-      password: password.trim(),
-      role: role === "admin" ? "admin" : "user",
-    },
-  });
-
-  return NextResponse.json({
-    user: { id: user.id, email: user.email, name: user.name, role: user.role },
-    message: "User created successfully",
-  });
 }
 
 // DELETE /api/users — delete a user (admin only)
@@ -52,6 +38,10 @@ export async function DELETE(req: NextRequest) {
   const { userId } = await req.json();
   if (!userId) return NextResponse.json({ error: "User ID required" }, { status: 400 });
 
-  await db.user.delete({ where: { id: userId } });
-  return NextResponse.json({ message: "User deleted" });
+  try {
+    deleteUser(userId);
+    return NextResponse.json({ message: "User deleted" });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 400 });
+  }
 }

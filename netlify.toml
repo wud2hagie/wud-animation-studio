@@ -1,0 +1,9 @@
+[build]
+  command = "next build"
+  publish = ".next"
+
+[build.environment]
+  NEXTAUTH_SECRET = "wud-studio-super-secret-key-2026"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
