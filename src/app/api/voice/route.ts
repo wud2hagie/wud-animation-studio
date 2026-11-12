@@ -19,7 +19,8 @@ export async function POST(req: NextRequest) {
     let audioUrl: string;
 
     if (response instanceof ArrayBuffer || response instanceof Uint8Array) {
-      const base64 = Buffer.from(response).toString("base64");
+      const bytes: number[] = Array.from(response instanceof ArrayBuffer ? new Uint8Array(response) : response);
+      const base64 = Buffer.from(bytes).toString("base64");
       audioUrl = `data:audio/wav;base64,${base64}`;
     } else if (typeof response === "string" && response.startsWith("data:")) {
       audioUrl = response;
