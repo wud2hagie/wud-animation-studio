@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import ZAI from "z-ai-web-dev-sdk";
+import { requirePermission } from "@/lib/auth/require-admin";
 
 export async function POST(req: NextRequest) {
+  const auth = await requirePermission("generate");
+  if (!auth.ok) return NextResponse.json({ error: auth.message }, { status: auth.status });
   try {
     const body = await req.json();
     const { topic, contentMode, language, tone, storyStyle } = body;
