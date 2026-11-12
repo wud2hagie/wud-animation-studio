@@ -418,7 +418,6 @@ export default function Home() {
       setRenderProgress(5)
       toast.info('Trying AI video generation...')
 
-      let aiVideoUrl: string | null = null
       try {
         const aiRes = await fetch('/api/render', {
           method: 'POST',
@@ -426,11 +425,11 @@ export default function Home() {
           body: JSON.stringify({ scenes: result.scenes, title: result.title, format }),
         })
         const aiData = await aiRes.json()
-        if (aiData.videoUrl) {
-          aiVideoUrl = aiData.videoUrl
+        const videoUrl = aiData?.videoUrl
+        if (typeof videoUrl === "string" && videoUrl.length > 0) {
           setRenderProgress(100)
           // Download the AI-generated video
-          await downloadVideoFromUrl(aiVideoUrl, format)
+          await downloadVideoFromUrl(videoUrl, format)
           toast.success(`AI video downloaded as ${format.toUpperCase()}!`)
           return
         }
