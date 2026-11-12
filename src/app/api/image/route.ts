@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import ZAI from "z-ai-web-dev-sdk";
+import { requirePermission } from "@/lib/auth/require-admin";
 
 export async function POST(req: NextRequest) {
+  const auth = await requirePermission("image_gen");
+  if (!auth.ok) return NextResponse.json({ error: auth.message }, { status: auth.status });
   try {
     const { prompt } = await req.json();
     if (!prompt?.trim()) {
