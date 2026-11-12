@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import ZAI from "z-ai-web-dev-sdk";
+import { requirePermission } from "@/lib/auth/require-admin";
 
 // POST /api/render
 // Body: { scenes: Scene[], title: string, format: string }
@@ -10,6 +11,8 @@ import ZAI from "z-ai-web-dev-sdk";
 // The client-side code handles the actual download from the returned URL.
 
 export async function POST(req: NextRequest) {
+  const auth = await requirePermission("generate");
+  if (!auth.ok) return NextResponse.json({ error: auth.message }, { status: auth.status });
   try {
     const body = await req.json();
     const { scenes, title, format } = body;
