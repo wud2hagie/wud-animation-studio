@@ -32,7 +32,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.7",
-    "@netlify/plugin-nextjs": "^5.16.2",
+    "@netlify/plugin-nextjs": "^5.16.6",
     "@tailwindcss/postcss": "^4",
     "@types/node": "26.6.5",
     "@types/react": "^19",
