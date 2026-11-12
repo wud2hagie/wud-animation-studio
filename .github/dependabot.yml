@@ -11,6 +11,8 @@ updates:
     ignore:
       - dependency-name: "typescript"
         versions: [">=7.0.0"]
+      - dependency-name: "lucide-react"
+        versions: [">=1.0.0"]
     groups:
       nextjs:
         patterns:
