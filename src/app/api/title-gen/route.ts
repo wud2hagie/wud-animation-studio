@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import ZAI from "z-ai-web-dev-sdk";
+import { requirePermission } from "@/lib/auth/require-admin";
 
 // POST /api/title-gen
 // Body: { topic: string, count?: number, style?: "viral" | "educational" | "question" | "shocking" | "listicle" }
 // Returns: { titles: Array<{ title: string, style: string, hook: string }> }
 
 export async function POST(req: NextRequest) {
+  const auth = await requirePermission("title_gen");
+  if (!auth.ok) return NextResponse.json({ error: auth.message }, { status: auth.status });
   try {
     const { topic, count = 10, style = "viral" } = await req.json();
     if (!topic?.trim()) {
