@@ -8,6 +8,9 @@ updates:
       time: "06:00"
       timezone: "Africa/Addis_Ababa"
     open-pull-requests-limit: 10
+    ignore:
+      - dependency-name: "typescript"
+        versions: [">=7.0.0"]
     groups:
       nextjs:
         patterns:
