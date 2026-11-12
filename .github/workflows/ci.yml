@@ -20,7 +20,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high || echo "::warning::Production dependency audit found advisories; see job log."
+        run: npm audit --omit=dev --audit-level=high
+      - name: Audit all dependencies (informational)
+        run: npm audit --audit-level=high || echo "::warning::Development dependency advisories remain; review job log."
       - name: Build Next.js application
         run: npm run build
         env:
