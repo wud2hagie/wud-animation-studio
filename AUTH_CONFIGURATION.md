@@ -18,12 +18,22 @@ If the administrator email/password are absent or the password is shorter than 1
 1. The browser submits email and password to NextAuth's Credentials provider through `/api/auth/[...nextauth]`.
 2. `authorize()` normalizes the email and verifies the password against a salted scrypt hash.
 3. On success, NextAuth creates a JWT session. The application adds the user ID, role and permission list to the token and exposes those claims on the server session.
-4. Protected API routes call `requireUser()` or `requireAdmin()`; the latter rejects users whose session role is not `admin`.
+4. Protected API routes call `requireUser()`, `requirePermission()` or `requireAdmin()`. Each guard checks the current process-local user registry; permission checks do not rely only on the role/permission values copied into the JWT at sign-in.
 5. The session lifetime is currently seven days. This is a JWT session, not an OAuth access/refresh-token flow.
+
+## Protected API permissions
+
+- Video generation and rendering: `generate`
+- Image generation: `image_gen`
+- Voice generation: `voice_gen`
+- Title generation: `title_gen`
+- User administration: `manage_users` through admin-only routes
+
+Unauthenticated requests receive 401 responses; authenticated users without the required permission receive 403 responses.
 
 ## Important deployment limitation
 
-The user registry is still process-local memory. Additional users and password changes are lost when a server process restarts and are not shared between serverless instances. The JWT also carries role/permission claims from sign-in, so changing a role does not revoke already-issued sessions immediately.
+The user registry is still process-local memory. Additional users and password changes are lost when a server process restarts and are not shared between serverless instances. The request guards re-check the current in-process record, so deleted users or changed permissions are rejected on that instance; however, different instances can still hold different registry state, and the JWT itself remains valid until expiry.
 
 **Do not treat multi-user administration as production-ready until the registry is moved to a persistent database, account mutations are made transactionally, and role changes/password resets can revoke or rotate sessions.** The Prisma schema currently present in this repository is not wired into this authentication module.
 
