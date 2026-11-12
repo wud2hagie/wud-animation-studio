@@ -30,12 +30,16 @@ export async function POST(req: NextRequest) {
     const zai = await ZAI.create();
 
     // Call the video generation API
+    const requestedDuration = scenes.reduce((total: number, scene: any) => total + (scene.durationSec || 4), 0);
+    // The provider currently accepts 5- or 10-second jobs only.
+    const providerDuration = requestedDuration <= 5 ? 5 : 10;
+
     const videoResponse = await zai.video.generations.create({
       prompt: fullPrompt,
       quality: "quality",
       with_audio: true,
       size: "768x1344",
-      duration: scenes.reduce((a: number, s: any) => a + (s.durationSec || 4), 0),
+      duration: providerDuration,
     });
 
     // The SDK's create call returns a task (id + task_status), not a
