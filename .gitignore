@@ -30,19 +30,20 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-# .env*  # uncommitted so it deploys with the app
+# Environment credentials and local secrets
+.env
+.env.*
+!.env.example
+.z-ai-config
 
 # vercel
 .vercel
-
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
 local-*
 .claude
-# .z-ai-config  # uncommitted so it deploys with the app
 *.log
 dev.log
 dev.out.log
