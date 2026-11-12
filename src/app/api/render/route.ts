@@ -38,52 +38,42 @@ export async function POST(req: NextRequest) {
       duration: scenes.reduce((a: number, s: any) => a + (s.durationSec || 4), 0),
     });
 
-    // Check if synchronous success
-    const syncUrl = videoResponse?.video_result?.[0]?.url ||
-                    videoResponse?.video_url ||
-                    videoResponse?.url ||
-                    videoResponse?.video;
-
-    if (syncUrl && videoResponse?.task_status !== "PROCESSING") {
-      return NextResponse.json({
-        videoUrl: syncUrl,
-        format: format || "mp4",
-        status: "success",
-      });
-    }
-
-    // Async — poll for result
-    const taskId = videoResponse?.id;
+    // The SDK's create call returns a task (id + task_status), not a
+    // completed video result. Fetch results through async.result.query().
+    const taskId = videoResponse.id;
     if (!taskId) {
       throw new Error("No task ID returned from video API");
     }
 
     let attempts = 0;
     const maxAttempts = 60; // 60 * 3s = 180s
+    let result = await zai.async.result.query(taskId);
 
-    while (attempts < maxAttempts) {
-      await new Promise((r) => setTimeout(r, 3000));
-      attempts++;
+    while (result.task_status === "PROCESSING" && attempts < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      attempts += 1;
+      result = await zai.async.result.query(taskId);
+    }
 
-      const result = await zai.async.result(taskId);
+    if (result.task_status === "SUCCESS") {
+      const videoUrl =
+        result.video_result?.[0]?.url ||
+        result.video_url ||
+        result.url ||
+        result.video;
 
-      if (result?.task_status === "SUCCESS") {
-        const videoUrl = result?.video_result?.[0]?.url ||
-                        result?.video_url ||
-                        result?.url ||
-                        result?.video;
-        if (videoUrl) {
-          return NextResponse.json({
-            videoUrl,
-            format: format || "mp4",
-            status: "success",
-          });
-        }
+      if (videoUrl) {
+        return NextResponse.json({
+          videoUrl,
+          format: format || "mp4",
+          status: "success",
+        });
       }
+      throw new Error("Video task completed without a downloadable URL");
+    }
 
-      if (result?.task_status === "FAIL") {
-        throw new Error("Video generation failed on server");
-      }
+    if (result.task_status === "FAIL") {
+      throw new Error("Video generation failed on the provider");
     }
 
     // Timeout
